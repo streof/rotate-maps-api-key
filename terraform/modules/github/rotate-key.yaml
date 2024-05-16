@@ -1,0 +1,98 @@
+name: Rotate Google Maps API Key
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 2 * * *' # Runs daily at 2 AM UTC
+
+jobs:
+  rotate-key:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Authenticate with Google Cloud
+        uses: 'google-github-actions/auth@v2'
+        with:
+          credentials_json: '${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}'
+
+      - name: 'Set up gcloud'
+        uses: 'google-github-actions/setup-gcloud@v2'
+        with:
+          version: 'latest'
+
+      - name: 'Create API key'
+        id: create-key
+        run: |
+          # Start an API key creation job in the backgrount and wati until it completes.
+          display_name="Google Maps API Key"
+          echo "display_name=${display_name}" >> $GITHUB_ENV
+          operation_name=$(gcloud services api-keys create --display-name="$display_name" --async --format="value(name)")
+
+          if [ -n "$operation_name" ]; then
+              echo "Waiting for key creation operation to complete."
+              # Suppress the output as it contains the API key.
+              gcloud services operations wait "$operation_name" > /dev/null 2>&1
+
+              # Check if the wait was successful
+              if [ $? -eq 0 ]; then
+                  new_key_id=$(gcloud services api-keys list --filter="displayName:$display_name" --sort-by="-createTime" --limit=1 --format="value(name)")
+                  new_key_string=$(gcloud services api-keys get-key-string $new_key_id --format="value(keyString)")
+                  echo "Successfully created API key: $new_key_id"
+                  echo "::add-mask::$new_key_string"
+                  echo "new_key_string=${new_key_string}" >> $GITHUB_OUTPUT
+              else
+                  echo "Failed to create API key."
+                  exit 1
+              fi
+          else
+              echo "Failed to retrieve operation name."
+              exit 1
+          fi
+
+      - name: Authenticate with Azure
+        uses: azure/login@v2
+        with:
+          creds: '{"clientId":"${{ secrets.AZURE_CLIENT_ID }}","clientSecret":"${{ secrets.AZURE_CLIENT_SECRET }}","subscriptionId":"${{ secrets.AZURE_SUBSCRIPTION_ID }}","tenantId":"${{ secrets.AZURE_TENANT_ID }}"}'
+
+      - name: Store in Azure Key Vault
+        uses: azure/cli@v2
+        with:
+          azcliversion: latest
+          inlineScript: |
+            new_key_string="${{ steps.create-key.outputs.new_key_string }}"
+            if [ -z "$new_key_string" ]; then
+              echo "New API key string is empty. Exiting."
+              exit 1
+            fi
+
+            output=$(az keyvault secret set --vault-name "${{ secrets.AZURE_KEY_VAULT_NAME }}" --name ${{ secrets.AZURE_MAPS_KEY_NAME }} --value "$new_key_string")
+            if [ $? -eq 0 ]; then
+              echo "Successfully stored the new Google Maps API key."
+            else
+              echo "Failed to store the new Google Maps API key."
+              echo "$output"
+              exit 1
+            fi
+
+      - name: Delete old API keys
+        run: |
+          key_names=$(gcloud services api-keys list --filter="displayName:$display_name" --sort-by="-createTime" --format="value(name)")
+          key_count=$(echo "$key_names" | wc -l)
+          echo "Found $key_count keys."
+
+          # Make sure to always have at least 2 working keys. This gives applications 24 hours to switch to the new key.
+          if [ $key_count -gt 2 ]; then
+            delete_count=$((key_count-2))
+            echo "Deleting $delete_count keys."
+            keys_to_delete=$(echo "$key_names" | tail -n $delete_count)
+
+            for key in $keys_to_delete; do
+              # Suppress the output as it contains the API key.
+              gcloud services api-keys delete "$key" > /dev/null 2>&1
+              echo "Deleted key: $key"
+            done
+          else
+            echo "No keys to delete."
+          fi
