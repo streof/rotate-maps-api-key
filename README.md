@@ -35,14 +35,15 @@ The responsilities of the modules are as follows:
 - `azure`:
     - Key Vault used to store the Google Maps API key;
     - Service Principal used to authenticate when using GitHub Actions;
-    - Role-based access control used to grant required permissions.
+    - Role-based access control used to grant required permissions;
+    - Purge protection is enabled preventing permanent deletes until the end of the 7 days retention period.
 - `gcp`:
-    - Dedicated project encapsulating all required resources.
-    - Service Account used to authenticate when using GitHub Actions.
+    - Dedicated project encapsulating all required resources;
+    - Service Account used to authenticate when using GitHub Actions;
     - Needed permissions and API services.
 - `github`:
-    - Separated repository
-    - Workflow used to rotate the Google Maps API key.
+    - Separated repository;
+    - Workflow used to rotate the Google Maps API key;
     - Required Google Cloud and Azure secrets.
 
 In addition we have two Bash scripts:
