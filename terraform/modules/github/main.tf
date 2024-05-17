@@ -20,6 +20,15 @@ resource "github_repository" "repo" {
   auto_init    = true
 }
 
+resource "github_repository_file" "readme" {
+  repository          = github_repository.repo.name
+  branch              = "main"
+  file                = "README.md"
+  content             = file("${path.module}/README.md")
+  commit_message      = "Add documentation"
+  overwrite_on_create = true
+}
+
 resource "github_branch" "main" {
   repository = github_repository.repo.name
   branch     = "main"
